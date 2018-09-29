@@ -1,0 +1,249 @@
+---
+html_document: null
+output: null
+resource_files:
+- slowregard1chars.RDS
+- slowregard1text.RDS
+- SlowRegard1.hd5
+runtime: shiny
+self_contained: no
+---
+
+```{r echo=FALSE} 
+library(knitr)
+opts_chunk$set(echo=FALSE,message=FALSE,warning=FALSE,cache=FALSE)
+```
+
+```{r,message=FALSE}
+
+library(ggplot2)
+library(dplyr)
+library(keras)
+library(readr)
+library(stringr)
+library(purrr)
+library(tokenizers)
+library(cognizer)
+library(shinythemes)
+```
+
+```{R SHINYTRY, warning=FALSE}
+model<-NULL
+text<-NULL
+chars<-NULL
+# model<- load_model_hdf5('EEmodel2.hd5')
+# text<- readRDS('EE2text.RDS')
+# chars<- readRDS('EE2chars.RDS')
+# 
+# GRIMMmodel<- load_model_hdf5('GrimmModel1.hd5')
+# GRIMMtext<- readRDS('Grimm1text.RDS')
+# GRIMMchars<- readRDS('Grimm1chars.RDS')
+
+```
+
+
+```{r predict}
+maxlen<-50
+
+sample_mod <- function(preds, temperature = 1){
+  preds <- log(preds)/temperature
+  exp_preds <- exp(preds)
+  preds <- exp_preds/sum(exp(preds))
+  
+  rmultinom(1, 1, preds) %>% 
+    as.integer() %>%
+    which.max()
+}
+
+nextindex<- function(sentence,diversity){
+  x <- sapply(chars, function(x){
+      as.integer(x == sentence)
+    })
+    x <- array_reshape(x, c(1, dim(x)))
+    
+    preds <- predict(model, x)
+    next_index <- sample_mod(preds, diversity)
+}
+
+
+generateText<-function(chapter_length=10,sentence="",diversity=1){
+  # sentence<-paste(sentence,"\n\n",sep="")
+  originalSentence<-sentence
+  sentence<-strsplit(sentence,split=NULL)[[1]]
+  sentence_length<- length(sentence)
+  if (sentence_length>maxlen){
+    sentence<-sentence[1:maxlen]
+  }
+  
+  if (sentence_length<maxlen){
+    missing<-maxlen-sentence_length
+    start_index <- sample(1:(length(text) - maxlen), size = 1)
+    ss <- text[start_index:(start_index + missing - 1)]
+    sentence<-c(ss,sentence)
+  }
+  
+  generated<-""
+  
+  for(i in 1:chapter_length){
+    next_index<-nextindex(sentence,diversity)
+    next_char <- chars[next_index]
+    generated <- str_c(generated, next_char, collapse = "")
+    sentence <- c(sentence[-1], next_char)
+  }
+  originalSentence<-str_c(originalSentence,collapse="")
+  generated<- paste(originalSentence,generated,sep='')
+}
+
+```
+
+```{r}
+maketext <- reactive({
+  input$update
+  isolate({
+    withProgress({
+      setProgress(message = "Creating new prose...")
+      generateText(input$chapter_length,
+                   sentence=input$seedwords,
+                   diversity=input$creativity)
+      })
+  })
+})
+
+observe({
+  input$source
+  s<- input$source
+  s<-ifelse(is.null(s),'NONE',s)
+  
+  withProgress({
+    setProgress(message = 'Loading new model...')
+    if(s=='Grimm (Fairytails)'){
+      maxlen<<- 20
+      model<<- load_model_hdf5('GrimmModel4.hd5')
+      text<<- readRDS('Grimm4text.RDS')
+      chars<<- readRDS('Grimm4chars.RDS')
+      
+    }else if(s=='EE (poems)'){
+      maxlen<<- 50
+      model<<- load_model_hdf5('EE256-64.hd5')
+      text<<- readRDS('EE256-64text.RDS')
+      chars<<- readRDS('EE256-64chars.RDS')
+      
+    }else if(s=='Poe (poems)'){
+      maxlen<<- 50
+      model<<- load_model_hdf5('POEmodel4.hd5')
+      text<<- readRDS('POE1text.RDS')
+      chars<<- readRDS('POE1chars.RDS')
+      
+    }else if(s=='Rothfuss (Kingkiller)'){
+      maxlen<<- 20
+      model<<- load_model_hdf5('KKC4.hd5')
+      text<<- readRDS('KKC4text.RDS')
+      chars<<- readRDS('KKC4chars.RDS')
+    }else if(s=='Shakespere (sonnets)'){
+      maxlen<<- 80
+      model<<- load_model_hdf5('Sonnets256-64.hd5')
+      text<<- readRDS('Sonnets1text.RDS')
+      chars<<- readRDS('Sonnets1chars.RDS')
+    }else if(s=='Malory (King Arthur)'){
+      maxlen<<- 20
+      model<<- load_model_hdf5('ArthurModel1.hd5')
+      text<<- readRDS('Arthur1text.RDS')
+      chars<<- readRDS('Arthur1chars.RDS')
+    }else if(s=='Chaucer (Troilus)'){
+      maxlen<<- 50
+      model<<- load_model_hdf5('TroilusModel1.hd5')
+      text<<- readRDS('Troilus1text.RDS')
+      chars<<- readRDS('Troilus1chars.RDS')
+      maxlen<<-model$input_shape[[2]]
+    }else if(s=='Rothfuss (Auri)'){
+      maxlen<<- 50
+      model<<- load_model_hdf5('SlowRegard256-64.hd5')
+      text<<- readRDS('SlowRegard256-64text.RDS')
+      chars<<- readRDS('SlowRegard256-64chars.RDS')
+      maxlen<<-model$input_shape[[2]]
+    }
+  })
+})
+
+
+#So I was messing with this for quite a while, but here's how I think it should happen...
+# #when you click the button it starts a loop that calls the function to generate one chracter at a time.
+#The first call will set up the initial sentence and then it will get passed to the function as it is updated. maybe use this code:
+#  if (isolate(status$i) < length(params)){ 
+#             invalidateLater(0, session) #reset the observer, so it'll repeat
+#           }
+#           else{
+#             isolate({status$i <- 0}) 
+#           }
+#https://stackoverflow.com/questions/40737226/update-shiny-output-within-loop
+#https://groups.google.com/forum/#!topic/shiny-discuss/0ExyzzaaXTU
+
+
+# output$frame <- renderUI({
+#     my_test <- tags$iframe(src="https://www.naturalreaders.com/online/", height=600, width=535)
+#     print(my_test)
+#     my_test
+#   })
+
+fluidPage(
+  titlePanel('Textual Essence Extractor'),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(inputId = 'source',
+                  label='Choose source material:',
+                  choices=list('Chaucer (Troilus)',
+                               'Malory (King Arthur)',
+                               'Rothfuss (Kingkiller)',
+                               'Rothfuss (Auri)',
+                               'Poe (poems)',
+                               'Shakespere (sonnets)',
+                               'Grimm (Fairytails)',
+                               'EE (poems)'),
+                  selected='Chaucer (Troilus)'),
+      numericInput(inputId = "chapter_length",label="Text Length",
+                   min=100,max=5000,value=500,step=100),
+      textInput('seedwords',label='Optional: enter a few words for inspiration:'),
+      # shinyjs::runjs("$('#seedwords').attr('maxlength', 30)"),
+      tags$div(title="Lower creativity produces more real words",
+               sliderInput("creativity", "Creativity:",
+                           min = 0.005, max = 2,
+                           value = 0.5, step = 0.005)),
+      actionButton("update", "Write!"),
+      p(),
+      div('Before even reading the words, we can immediately tell a lot about a piece of writing in front of us. Is it a poem? Is it a story? Is there dialogue?'),
+      div('Some writers have such a unique style that we can distinguish them as well, perhaps their distinct use of structure or phrasing. The presence of favorite characters can also help us recognize a page from our favorite novel.' ),
+      div(em('The Textual Essence Extractor'),' applies advanced neural network modeling to distill the unique features of a author\'s work and generate new text in the recognizable style.'), 
+      p('If you wish, you may enter a few characters to attempt to influence the artificial creativity.'),
+      p('-Adam Pallus')
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Output",
+                 tags$style(type="text/css", "#Output_text {white-space: pre-wrap;}"),
+                 textOutput("Output_text")),
+        tabPanel("About",
+                 p('These models generate text one character at a time based on the previous 20-50 characters in the sequence. If no input text is given by the user, then a random sequence of characters from the source text is used.'),
+                 p('The models are artificial neural networks with long-short-term memory (LSTM) nodes. We tried a variety of network architectures and trained them using keras for R with TensorFlow running on an NVIDIA GeForce GTX 970M graphics card. Models trained for 1-12 hours, depending on the amount of source text available and the size of the network to be trained.'),
+                 p('The training used a categorial cross correlation loss metric to assess progress, but for this task, there is really no mathematical formula that can truely assess the aesthetic beauty of the generated text. Ideally, output would be regular english words (or Middle English for Chaucer and Early Modern English for Shakespere), but creatively arranged. For the poems, the structure of each line is especially important. Sonnets should be arranged as lines of equal length, while poems in the style of e. e. Cummings may include words creatively split among several lines with significant white space between lines.'),
+                 p('For this reason, the models must be assessed based on whether the output is interesting to a human. This is complicated by the variation among what each human finds to be interesting as well as the level of familiarity that they may have with various text. Those who have never read the Kingkiller Chronicles, for example, may not be impressed with the appearance of Kvothe, Bast or Chronicler in the generated text. Neither would a naive reader understand the significance of  Foxen and his jar or Mantle to Auri.'),
+                 p('One potential application of this text generator could be to replace the use of Lorem Ipsim, unrelated Latin text used as filler by graphic designers, with random text in the style of the work. Imagine a model trained to generate random ad copy in the style typically used by each magazine or website. Although the content will not be appropriate, it might be less distracting than Latin to clients reviewing the work.')),
+        tabPanel("Tips",
+                 p("After selecting a new source, new text will not be generated until you press the 'Write' button. This gives you an opportunity to select the text length and creativity that you prefer."),
+                 p("High creativity introduces additional randomess into the generation. This results in unusual line breaks and strange words. Try the lowest creativity for each model. While this will often result in repetitive words or phases, it also reveals the truest essence of each work in a sense."),
+                 p("Longer text tends to be more interesting, with the only tradeoff being additional time to generate."),
+                 p("The words you enter into the box often have only a small effect on the model unless you hit on a pattern that the model really likes. Because the model is creative, it will not re-create famous lines from the original works unless the creativity is very low and the text is very interesting to the model. Try 'Bells, bells, ' with Poe on a low creativity and it will be unable to resist generating the third 'bells,' or often, 'bells!'"))
+      )
+    )
+  )
+)
+  
+  
+# output$writer<-renderText({gen$generated})
+
+output$Output_text<-renderText(
+  maketext()
+)
+
+```
+
